@@ -1,0 +1,9 @@
+## Interface: 120000
+## Title: Ez-OBRotation
+## Notes: Ez-OBRotation
+## Author: You
+## Version: 2.0
+## IconTexture: Interface\AddOns\Ez-OBRotation\Ez-OBRotation.jpg
+## SavedVariables: EzOBR_Config
+
+Ez-OBRotation.lua
