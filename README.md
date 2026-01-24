@@ -23,4 +23,4 @@ If you encounter any bugs or have suggestions for new features (like support for
 
 ---
 
-**Enjoying the addon?** If this helped you enjoy the game or made your raiding life easier, consider [buying me a coffee]([YOUR_KO-FI_LINK_HERE](https://ko-fi.com/vincentb82542))!
+**Enjoying the addon?** If this helped you enjoy the game or made your raiding life easier, consider [buying me a coffee](https://ko-fi.com/vincentb82542)!
