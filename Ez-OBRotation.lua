@@ -69,16 +69,17 @@ function f:CreateMinimapButton()
     btn:SetSize(32, 32)
     btn:SetFrameLevel(8)
     
-    local icon = btn:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(20, 20)
-    icon:SetPoint("CENTER")
-    -- Use a reliable WoW icon - the custom icon path may not exist
+    local icon = btn:CreateTexture(nil, "BACKGROUND")
     icon:SetTexture("Interface\\Icons\\Trade_Engineering")
+    icon:SetSize(22, 22)
+    icon:SetPoint("CENTER")
     
     local border = btn:CreateTexture(nil, "OVERLAY")
     border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
     border:SetSize(52, 52)
     border:SetPoint("TOPLEFT")
+    
+    btn:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
     local function UpdatePos()
         local angle = math.rad(EzOBR_Config.minimapPos)
@@ -99,16 +100,27 @@ function f:CreateMinimapButton()
         end
     end)
     
-    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    btn:SetScript("OnClick", function(self, button) 
-        if not settingsCategory then 
-            Settings.OpenToCategory("Ez-OBRotation") 
-            return 
-        end
-        if SettingsPanel:IsShown() then
-            SettingsPanel:Hide()
+    btn:RegisterForClicks("AnyUp")
+    btn:SetScript("OnClick", function() 
+        -- Toggle the options panel directly instead of using Settings API
+        local panel = _G["EzOBR_OptionsPanel"]
+        if panel then
+            if panel:IsShown() then
+                panel:Hide()
+            else
+                -- Show our panel directly
+                panel:SetParent(UIParent)
+                panel:ClearAllPoints()
+                panel:SetPoint("CENTER")
+                panel:SetSize(400, 350)
+                panel:Show()
+                panel:Raise()
+            end
         else
-            Settings.OpenToCategory(settingsCategory:GetID())
+            -- Fallback to settings if panel doesn't exist yet
+            if settingsCategory then
+                Settings.OpenToCategory(settingsCategory:GetID())
+            end
         end
     end)
     
@@ -128,9 +140,36 @@ end
 -- 3. SETTINGS MENU
 ----------------------------------------------------------------------
 function f:CreateMenu()
-    local panel = CreateFrame("Frame", "EzOBR_OptionsPanel", UIParent)
+    local panel = CreateFrame("Frame", "EzOBR_OptionsPanel", UIParent, "BackdropTemplate")
     panel.name = "Ez-OBRotation"
+    panel:SetSize(400, 350)
+    panel:SetPoint("CENTER")
+    panel:Hide()
     
+    -- Make panel closeable with ESC
+    table.insert(UISpecialFrames, "EzOBR_OptionsPanel")
+    
+    -- Add a backdrop so it looks like a proper window
+    panel:SetBackdrop({
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+        tile = true, tileSize = 32, edgeSize = 32,
+        insets = { left = 8, right = 8, top = 8, bottom = 8 }
+    })
+    panel:SetBackdropColor(0, 0, 0, 1)
+    
+    -- Make it movable
+    panel:SetMovable(true)
+    panel:EnableMouse(true)
+    panel:RegisterForDrag("LeftButton")
+    panel:SetScript("OnDragStart", panel.StartMoving)
+    panel:SetScript("OnDragStop", panel.StopMovingOrSizing)
+    
+    -- Close button
+    local closeBtn = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", -5, -5)
+    
+    -- Still register with Settings for /ezobr command
     settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
     Settings.RegisterAddOnCategory(settingsCategory)
 
