@@ -1,23 +1,28 @@
-----------------------------------------------------------------------
--- Ez-OBRotation - One Button Rotation Keybind Display
--- Shows the keybind of the spell displayed on the SBA button
-----------------------------------------------------------------------
-
 local AddonName = "Ez-OBRotation"
-
 local fontBold = "Interface\\AddOns\\Ez-OBRotation\\Fonts\\Luciole-Bold.ttf"
-local fontReg  = "Interface\\AddOns\\Ez-OBRotation\\Fonts\\Luciole-Regular.ttf"
+local fontReg = "Interface\\AddOns\\Ez-OBRotation\\Fonts\\Luciole-Regular.ttf"
+local fontFallback = "Fonts\\FRIZQT__.TTF"
 
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
+f:RegisterEvent("UPDATE_BINDINGS")
+f:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 
-local settingsCategory = nil 
-local usingBartender = false
+local hotkeyCache = {}
+local cacheValid = false
+
+local function ValidateFont(fontPath)
+    local testString = UIParent:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    local success = pcall(testString.SetFont, testString, fontPath, 12, "OUTLINE")
+    testString:Hide()
+    testString:SetParent(nil)
+    return success
+end
 
 local defaults = {
     fontSize = 24,
-    fontPath = fontBold, 
-    r = 1, g = 1, b = 1, 
+    fontPath = fontFallback,
+    r = 1, g = 1, b = 1,
     anchor = "TOPRIGHT",
     minimapPos = 220,
 }
@@ -40,26 +45,135 @@ local anchorOffsets = {
     CENTER = {0, 0}
 }
 
+local function InvalidateHotkeyCache()
+    wipe(hotkeyCache)
+    cacheValid = false
+end
+
+local function GetBindCommand(slot)
+    if not slot then return nil end
+    if slot <= 12 then return "ACTIONBUTTON"..slot end
+    if slot >= 61 and slot <= 72 then return "MULTIACTIONBAR1BUTTON"..(slot-60) end
+    if slot >= 49 and slot <= 60 then return "MULTIACTIONBAR2BUTTON"..(slot-48) end
+    if slot >= 25 and slot <= 36 then return "MULTIACTIONBAR3BUTTON"..(slot-24) end
+    if slot >= 37 and slot <= 48 then return "MULTIACTIONBAR4BUTTON"..(slot-36) end
+    if slot >= 73 and slot <= 84 then return "MULTIACTIONBAR5BUTTON"..(slot-72) end
+    if slot >= 85 and slot <= 96 then return "MULTIACTIONBAR6BUTTON"..(slot-84) end
+    if slot >= 97 and slot <= 108 then return "MULTIACTIONBAR7BUTTON"..(slot-96) end
+    if slot >= 109 and slot <= 120 then return "MULTIACTIONBAR8BUTTON"..(slot-108) end
+    return nil
+end
+
+local function BuildHotkeyCache()
+    if cacheValid then return end
+    wipe(hotkeyCache)
+    
+    for slot = 1, 180 do
+        if HasAction(slot) then
+            local actionType, actionID = GetActionInfo(slot)
+            local command = GetBindCommand(slot)
+            local key = command and GetBindingKey(command)
+            
+            if key and key ~= "" then
+                if actionType == "spell" and actionID then
+                    if not hotkeyCache[actionID] then
+                        hotkeyCache[actionID] = key
+                    end
+                end
+            end
+        end
+    end
+    cacheValid = true
+end
+
+local function FindKeyForSpell(spellID)
+    if not spellID then return nil end
+    
+    BuildHotkeyCache()
+    if hotkeyCache[spellID] then
+        return hotkeyCache[spellID]
+    end
+    
+    local slots = C_ActionBar.FindSpellActionButtons(spellID)
+    if slots then
+        for _, slot in pairs(slots) do
+            local command = GetBindCommand(slot)
+            if command then
+                local key = GetBindingKey(command)
+                if key then
+                    hotkeyCache[spellID] = key
+                    return key
+                end
+            end
+        end
+    end
+    
+    local spellName = C_Spell.GetSpellName(spellID)
+    if spellName then
+        local lowerName = spellName:lower()
+        for slot = 1, 180 do
+            if HasAction(slot) then
+                local actionType, actionID = GetActionInfo(slot)
+                if actionType == "macro" and actionID then
+                    local _, _, body = GetMacroInfo(actionID)
+                    if body and body:lower():find(lowerName, 1, true) then
+                        local command = GetBindCommand(slot)
+                        if command then
+                            local key = GetBindingKey(command)
+                            if key then
+                                hotkeyCache[spellID] = key
+                                return key
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return nil
+end
+
+local function GetCurrentSuggestedSpell()
+    if C_AssistedCombat and C_AssistedCombat.GetRotationSpells then
+        local spells = C_AssistedCombat.GetRotationSpells()
+        if spells and spells[1] then
+            return spells[1]
+        end
+    end
+    return nil
+end
+
 f:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_LOGIN" then
         if not _G.EzOBR_Config then _G.EzOBR_Config = CopyTable(defaults) end
         if not _G.EzOBR_Config.anchor then _G.EzOBR_Config.anchor = "TOPRIGHT" end
         if not _G.EzOBR_Config.minimapPos then _G.EzOBR_Config.minimapPos = 220 end
-        if not _G.EzOBR_Config.fontPath then _G.EzOBR_Config.fontPath = fontBold end
-
-        usingBartender = C_AddOns.IsAddOnLoaded("Bartender4")
+        if not _G.EzOBR_Config.fontPath then _G.EzOBR_Config.fontPath = fontFallback end
+        
+        local customFontsAvailable = ValidateFont(fontBold) and ValidateFont(fontReg)
+        if not customFontsAvailable then
+            print("|cffFFFF00Ez-OBRotation:|r Custom fonts not found. If on Mac, check:")
+            print("  - Folder is named exactly: Ez-OBRotation")
+            print("  - Subfolder is named exactly: Fonts")
+            print("  - Files are: Luciole-Bold.ttf, Luciole-Regular.ttf")
+            _G.EzOBR_Config.fontPath = fontFallback
+        end
+        
+        if not ValidateFont(_G.EzOBR_Config.fontPath) then
+            _G.EzOBR_Config.fontPath = fontFallback
+        end
         
         self:CreateMenu()
         self:CreateMinimapButton()
         self:StartDetective()
         
         print("|cff00FF00Ez-OBRotation:|r Loaded!")
+    elseif event == "UPDATE_BINDINGS" or event == "ACTIONBAR_SLOT_CHANGED" then
+        InvalidateHotkeyCache()
     end
 end)
 
-----------------------------------------------------------------------
--- 2. MINIMAP BUTTON
-----------------------------------------------------------------------
 function f:CreateMinimapButton()
     local btn = CreateFrame("Button", "EzOBR_MinimapButton", Minimap)
     btn:SetSize(33, 33)
@@ -81,7 +195,6 @@ function f:CreateMinimapButton()
 
     local function UpdatePos()
         local angle = math.rad(EzOBR_Config.minimapPos)
-        -- Radius for proper edge positioning
         local radius = (Minimap:GetWidth() / 2) + 5
         btn:ClearAllPoints()
         btn:SetPoint("CENTER", Minimap, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
@@ -101,7 +214,7 @@ function f:CreateMinimapButton()
     end)
     
     btn:RegisterForClicks("AnyUp")
-    btn:SetScript("OnClick", function() 
+    btn:SetScript("OnClick", function()
         local panel = _G["EzOBR_OptionsPanel"]
         if panel then
             if panel:IsShown() then
@@ -126,9 +239,6 @@ function f:CreateMinimapButton()
     UpdatePos()
 end
 
-----------------------------------------------------------------------
--- 3. SETTINGS MENU
-----------------------------------------------------------------------
 function f:CreateMenu()
     local panel = CreateFrame("Frame", "EzOBR_OptionsPanel", UIParent, "BackdropTemplate")
     panel.name = "Ez-OBRotation"
@@ -156,19 +266,15 @@ function f:CreateMenu()
     local closeBtn = CreateFrame("Button", nil, panel, "UIPanelCloseButton")
     closeBtn:SetPoint("TOPRIGHT", -5, -5)
     
-    settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
-    Settings.RegisterAddOnCategory(settingsCategory)
+    local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
+    Settings.RegisterAddOnCategory(category)
 
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
     title:SetPoint("TOP", 0, -20)
     title:SetText("Ez-OBRotation Settings")
 
-    local modeText = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    modeText:SetPoint("TOP", title, "BOTTOM", 0, -10)
-    modeText:SetText(usingBartender and "|cff00FF00Mode: Bartender4 detected|r" or "|cff00FF00Mode: Blizzard Action Bars|r")
-
     local slider = CreateFrame("Slider", "EzOBR_SizeSlider", panel, "OptionsSliderTemplate")
-    slider:SetPoint("TOP", modeText, "BOTTOM", 0, -30)
+    slider:SetPoint("TOP", title, "BOTTOM", 0, -40)
     slider:SetWidth(200)
     slider:SetMinMaxValues(10, 50)
     slider:SetValue(EzOBR_Config.fontSize)
@@ -214,7 +320,7 @@ function f:CreateMenu()
         local info = UIDropDownMenu_CreateInfo()
         for k, v in pairs(anchorMap) do
             info.text = k
-            info.func = function() 
+            info.func = function()
                 EzOBR_Config.anchor = v
                 UIDropDownMenu_SetText(drop, k)
             end
@@ -226,16 +332,15 @@ function f:CreateMenu()
     UIDropDownMenu_SetWidth(drop, 100)
     UIDropDownMenu_SetText(drop, reverseAnchorMap[EzOBR_Config.anchor] or "Top Right")
 
-    -- Font Selection Buttons
     local fontLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     fontLabel:SetPoint("TOP", dropLabel, "BOTTOM", 40, -30)
     fontLabel:SetText("Font Style:")
     
     local fontButtons = {
-        {"Luciole Bold", fontBold},        
-        {"Luciole Regular", fontReg},      
-        {"Standard (Friz)", "Fonts\\FRIZQT__.TTF"}, 
-        {"Combat (Skurri)", "Fonts\\SKURRI.TTF"},   
+        {"Luciole Bold", fontBold},
+        {"Luciole Regular", fontReg},
+        {"Standard (Friz)", "Fonts\\FRIZQT__.TTF"},
+        {"Combat (Skurri)", "Fonts\\SKURRI.TTF"},
     }
     
     local lastFontBtn = nil
@@ -249,194 +354,44 @@ function f:CreateMenu()
         fbtn:SetSize(140, 22)
         fbtn:SetText(fontData[1])
         
-        fbtn:SetScript("OnClick", function() 
-            EzOBR_Config.fontPath = fontData[2]
-            print("|cff00FF00Ez-OBRotation:|r Font changed to " .. fontData[1])
+        fbtn:SetScript("OnClick", function()
+            if ValidateFont(fontData[2]) then
+                EzOBR_Config.fontPath = fontData[2]
+                print("|cff00FF00Ez-OBRotation:|r Font changed to " .. fontData[1])
+            else
+                print("|cffFF0000Ez-OBRotation:|r Font not available: " .. fontData[1])
+            end
         end)
         lastFontBtn = fbtn
     end
 
     SLASH_EZOBR1 = "/ezobr"
-    SlashCmdList["EZOBR"] = function() 
+    SlashCmdList["EZOBR"] = function()
         if panel:IsShown() then
             panel:Hide()
         else
             panel:Show()
         end
     end
-    
-    -- Debug command
-    SLASH_EZOBRDEBUG1 = "/ezobrdebug"
-    SlashCmdList["EZOBRDEBUG"] = function()
-        print("|cff00FF00=== Ez-OBRotation Debug ===|r")
-        print("Using Bartender:", C_AddOns.IsAddOnLoaded("Bartender4"))
-        
-        local found = false
-        
-        -- Search Blizzard default buttons for AssistedCombatRotationFrame
-        local barPrefixes = {
-            "ActionButton", 
-            "MultiBarBottomLeftButton", 
-            "MultiBarBottomRightButton",
-            "MultiBarRightButton", 
-            "MultiBarLeftButton", 
-            "MultiBar5Button",
-            "MultiBar6Button", 
-            "MultiBar7Button",
-            "MultiBar8Button",
-        }
-        for _, prefix in ipairs(barPrefixes) do
-            for i = 1, 12 do
-                local btn = _G[prefix..i]
-                if btn and btn:IsVisible() and btn.AssistedCombatRotationFrame and btn.AssistedCombatRotationFrame:IsShown() then
-                    found = true
-                    print("Found SBA on Blizzard:", prefix..i)
-                end
-            end
-        end
-        
-        -- Search Bartender buttons
-        for i = 1, 180 do
-            local btn = _G["BT4Button"..i]
-            if btn and btn:IsVisible() and btn.AssistedCombatRotationFrame and btn.AssistedCombatRotationFrame:IsShown() then
-                found = true
-                print("Found SBA on Bartender: BT4Button"..i)
-            end
-        end
-        
-        -- Search ALL visible frames for AssistedCombatRotationFrame (the yellow arrow)
-        print("|cffFFFF00Searching ALL frames for AssistedCombatRotationFrame...|r")
-        local searchCount = 0
-        for frameName, frame in pairs(_G) do
-            if type(frame) == "table" and type(frame.IsVisible) == "function" then
-                if frame.AssistedCombatRotationFrame then
-                    searchCount = searchCount + 1
-                    local isShown = frame.AssistedCombatRotationFrame:IsShown()
-                    print("Frame with AssistedCombatRotationFrame:", frameName, "- Shown:", isShown)
-                    if frame:IsVisible() and isShown then
-                        print("  ^ THIS ONE IS THE SBA BUTTON!")
-                        
-                        -- Get detailed info about this button
-                        local btn = frame
-                        print("  - btn.action:", btn.action)
-                        print("  - btn._state_action:", btn._state_action)
-                        
-                        if btn.GetAttribute then
-                            print("  - GetAttribute('action'):", btn:GetAttribute("action"))
-                        end
-                        
-                        if btn.CalculateAction then
-                            local ok, result = pcall(btn.CalculateAction, btn)
-                            print("  - CalculateAction():", ok and result or "FAILED")
-                        end
-                        
-                        -- Try to get spell info
-                        local actionSlot = btn.action or btn._state_action or (btn.GetAttribute and btn:GetAttribute("action"))
-                        if actionSlot then
-                            local actionType, id = GetActionInfo(actionSlot)
-                            print("  - ActionInfo:", actionType, id)
-                            if actionType == "spell" and id then
-                                local name = C_Spell.GetSpellName(id)
-                                print("  - Spell Name:", name)
-                                local slots = C_ActionBar.FindSpellActionButtons(id)
-                                if slots then
-                                    print("  - Spell is on slots:", table.concat(slots, ", "))
-                                    for _, slot in pairs(slots) do
-                                        local cmd = nil
-                                        if slot <= 12 then cmd = "ACTIONBUTTON"..slot
-                                        elseif slot >= 61 and slot <= 72 then cmd = "MULTIACTIONBAR1BUTTON"..(slot-60)
-                                        elseif slot >= 49 and slot <= 60 then cmd = "MULTIACTIONBAR2BUTTON"..(slot-48)
-                                        elseif slot >= 25 and slot <= 36 then cmd = "MULTIACTIONBAR3BUTTON"..(slot-24)
-                                        elseif slot >= 37 and slot <= 48 then cmd = "MULTIACTIONBAR4BUTTON"..(slot-36)
-                                        elseif slot >= 73 and slot <= 84 then cmd = "MULTIACTIONBAR5BUTTON"..(slot-72)
-                                        elseif slot >= 85 and slot <= 96 then cmd = "MULTIACTIONBAR6BUTTON"..(slot-84)
-                                        end
-                                        if cmd then
-                                            local key = GetBindingKey(cmd)
-                                            print("    Slot", slot, "->", cmd, "-> Key:", key or "NONE")
-                                        end
-                                    end
-                                else
-                                    print("  - Spell NOT found on any action bar!")
-                                end
-                            end
-                        else
-                            print("  - Could not get action slot!")
-                        end
-                    end
-                end
-            end
-        end
-        print("Total frames with AssistedCombatRotationFrame:", searchCount)
-        
-        if not found and searchCount == 0 then
-            print("|cffFF0000No SBA button found anywhere!|r")
-        end
-    end
 end
 
-----------------------------------------------------------------------
--- 4. KEYBIND DETECTION LOGIC
--- 
--- Goal: 
--- 1. Find the SBA button (has AssistedCombatHighlightFrame - golden ring)
--- 2. Hide the yellow arrow on it
--- 3. Get the spell currently displayed on that button
--- 4. Find the keybind for that spell on the action bars
--- 5. Show that keybind on the SBA button
-----------------------------------------------------------------------
 function f:StartDetective()
-    
-    local function GetBindCommand(slot)
-        if not slot then return nil end
-        if slot <= 12 then return "ACTIONBUTTON"..slot end
-        if slot >= 61 and slot <= 72 then return "MULTIACTIONBAR1BUTTON"..(slot-60) end
-        if slot >= 49 and slot <= 60 then return "MULTIACTIONBAR2BUTTON"..(slot-48) end
-        if slot >= 25 and slot <= 36 then return "MULTIACTIONBAR3BUTTON"..(slot-24) end
-        if slot >= 37 and slot <= 48 then return "MULTIACTIONBAR4BUTTON"..(slot-36) end
-        if slot >= 73 and slot <= 84 then return "MULTIACTIONBAR5BUTTON"..(slot-72) end
-        if slot >= 85 and slot <= 96 then return "MULTIACTIONBAR6BUTTON"..(slot-84) end
-        if slot >= 97 and slot <= 108 then return "MULTIACTIONBAR7BUTTON"..(slot-96) end
-        if slot >= 109 and slot <= 120 then return "MULTIACTIONBAR8BUTTON"..(slot-108) end
-        return nil
-    end
-
-    -- Find keybind for a spell by searching all action bars
-    local function FindKeyForSpell(spellID)
-        if not spellID then return nil end
-        local slots = C_ActionBar.FindSpellActionButtons(spellID)
-        if slots then
-            for _, slot in pairs(slots) do
-                local command = GetBindCommand(slot)
-                if command then
-                    local key = GetBindingKey(command)
-                    if key then return key end
-                end
-            end
-        end
-        return nil
-    end
-
-    -- Check if a button is the SBA button (has the yellow arrow - AssistedCombatRotationFrame)
     local function IsSBAButton(btn)
         if not btn then return false end
         if not btn:IsVisible() then return false end
-        -- The SBA button has AssistedCombatRotationFrame (the yellow arrow)
         if btn.AssistedCombatRotationFrame and btn.AssistedCombatRotationFrame:IsShown() then
             return true
         end
         return false
     end
 
-    -- Find the SBA button - check ALL buttons
     local function FindSBAButton()
-        -- Check Blizzard default buttons
         local barPrefixes = {
-            "ActionButton", 
-            "MultiBarBottomLeftButton", 
+            "ActionButton",
+            "MultiBarBottomLeftButton",
             "MultiBarBottomRightButton",
-            "MultiBarRightButton", 
-            "MultiBarLeftButton", 
+            "MultiBarRightButton",
+            "MultiBarLeftButton",
             "MultiBar5Button",
             "MultiBar6Button",
             "MultiBar7Button",
@@ -445,102 +400,27 @@ function f:StartDetective()
         for _, prefix in ipairs(barPrefixes) do
             for i = 1, 12 do
                 local btn = _G[prefix..i]
-                if btn and IsSBAButton(btn) then 
-                    return btn 
+                if btn and IsSBAButton(btn) then
+                    return btn
                 end
             end
         end
-        -- Then check Bartender buttons
         for i = 1, 180 do
             local btn = _G["BT4Button"..i]
-            if btn and IsSBAButton(btn) then 
-                return btn 
+            if btn and IsSBAButton(btn) then
+                return btn
             end
         end
-        return nil
-    end
-
-    -- Get the spell ID currently displayed on a button
-    local function GetButtonSpellID(btn)
-        if not btn then return nil end
-        
-        -- For Blizzard buttons, use btn.action directly
-        if btn.action then
-            local actionType, id = GetActionInfo(btn.action)
-            if actionType == "spell" then
-                return id
-            elseif actionType == "macro" then
-                local spellID = GetMacroSpell(id)
-                return spellID
-            end
-        end
-        
-        -- For Bartender buttons - try multiple methods
-        
-        -- Method 1: GetSpellId (some Bartender versions)
-        if btn.GetSpellId then
-            local ok, result = pcall(btn.GetSpellId, btn)
-            if ok and result and result > 0 then return result end
-        end
-        
-        -- Method 2: _state_action (Bartender internal)
-        if btn._state_action then
-            local actionType, id = GetActionInfo(btn._state_action)
-            if actionType == "spell" then
-                return id
-            elseif actionType == "macro" then
-                local spellID = GetMacroSpell(id)
-                return spellID
-            end
-        end
-        
-        -- Method 3: Get action from the button's action attribute
-        if btn.GetAttribute then
-            local actionSlot = btn:GetAttribute("action")
-            if actionSlot and actionSlot > 0 then
-                local actionType, id = GetActionInfo(actionSlot)
-                if actionType == "spell" then
-                    return id
-                elseif actionType == "macro" then
-                    local spellID = GetMacroSpell(id)
-                    return spellID
-                end
-            end
-        end
-        
-        -- Method 4: Try CalculateAction (Bartender)
-        if btn.CalculateAction then
-            local ok, actionSlot = pcall(btn.CalculateAction, btn)
-            if ok and actionSlot and actionSlot > 0 then
-                local actionType, id = GetActionInfo(actionSlot)
-                if actionType == "spell" then
-                    return id
-                elseif actionType == "macro" then
-                    local spellID = GetMacroSpell(id)
-                    return spellID
-                end
-            end
-        end
-        
-        -- Method 5: Check the icon texture and try to find the spell
-        if btn.icon then
-            local texture = btn.icon:GetTexture()
-            if texture then
-                -- This is a fallback - try to identify spell by texture
-                -- Not ideal but might work
-            end
-        end
-        
         return nil
     end
 
     local hookedButtons = {}
     
     local function HideGlows(btn)
-        if btn.SpellActivationAlert then 
-            btn.SpellActivationAlert:SetAlpha(0) 
+        if btn.SpellActivationAlert then
+            btn.SpellActivationAlert:SetAlpha(0)
         end
-        if btn.AssistedCombatRotationFrame then 
+        if btn.AssistedCombatRotationFrame then
             btn.AssistedCombatRotationFrame:SetAlpha(0)
             
             if not hookedButtons[btn] then
@@ -564,10 +444,10 @@ function f:StartDetective()
     end
 
     local function RestoreGlows(btn)
-        if btn.SpellActivationAlert then 
-            btn.SpellActivationAlert:SetAlpha(1) 
+        if btn.SpellActivationAlert then
+            btn.SpellActivationAlert:SetAlpha(1)
         end
-        if btn.AssistedCombatRotationFrame then 
+        if btn.AssistedCombatRotationFrame then
             btn.AssistedCombatRotationFrame:SetAlpha(1)
         end
     end
@@ -581,12 +461,11 @@ function f:StartDetective()
     end
 
     C_Timer.NewTicker(0.03, function()
-        -- Step 1: Find the SBA button (the one with the golden ring)
         local sbaButton = FindSBAButton()
 
         if lastActiveButton and lastActiveButton ~= sbaButton then
-            if lastActiveButton.EzOBR_Text then 
-                lastActiveButton.EzOBR_Text:Hide() 
+            if lastActiveButton.EzOBR_Text then
+                lastActiveButton.EzOBR_Text:Hide()
             end
             RestoreGlows(lastActiveButton)
             lastKeyText = nil
@@ -596,10 +475,8 @@ function f:StartDetective()
 
         if not sbaButton then return end
 
-        -- Step 2: Hide the yellow arrow
         HideGlows(sbaButton)
 
-        -- Step 3: Create/get text overlay
         if not sbaButton.EzOBR_Text then
             sbaButton.EzOBR_Text = sbaButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             sbaButton.EzOBR_Text:SetDrawLayer("OVERLAY", 7)
@@ -609,7 +486,7 @@ function f:StartDetective()
         text:Show()
         
         if not pcall(text.SetFont, text, EzOBR_Config.fontPath, EzOBR_Config.fontSize, "OUTLINE") then
-            text:SetFont("Fonts\\FRIZQT__.TTF", EzOBR_Config.fontSize, "OUTLINE")
+            text:SetFont(fontFallback, EzOBR_Config.fontSize, "OUTLINE")
         end
         text:SetTextColor(EzOBR_Config.r, EzOBR_Config.g, EzOBR_Config.b, 1)
 
@@ -618,10 +495,42 @@ function f:StartDetective()
         local offsets = anchorOffsets[point] or anchorOffsets.TOPRIGHT
         text:SetPoint(point, sbaButton, point, offsets[1], offsets[2])
 
-        -- Step 4: Get the spell currently displayed on the SBA button
-        local spellID = GetButtonSpellID(sbaButton)
+        local spellID = nil
         
-        -- Step 5: Find the keybind for this spell on the action bars
+        if sbaButton.action then
+            local actionType, id = GetActionInfo(sbaButton.action)
+            if actionType == "spell" then
+                spellID = id
+            elseif actionType == "macro" then
+                spellID = GetMacroSpell(id)
+            end
+        end
+        
+        if not spellID and sbaButton._state_action then
+            local actionType, id = GetActionInfo(sbaButton._state_action)
+            if actionType == "spell" then
+                spellID = id
+            elseif actionType == "macro" then
+                spellID = GetMacroSpell(id)
+            end
+        end
+        
+        if not spellID and sbaButton.GetAttribute then
+            local actionSlot = sbaButton:GetAttribute("action")
+            if actionSlot and actionSlot > 0 then
+                local actionType, id = GetActionInfo(actionSlot)
+                if actionType == "spell" then
+                    spellID = id
+                elseif actionType == "macro" then
+                    spellID = GetMacroSpell(id)
+                end
+            end
+        end
+        
+        if not spellID then
+            spellID = GetCurrentSuggestedSpell()
+        end
+        
         local foundKey = FindKeyForSpell(spellID)
         local formattedKey = FormatKey(foundKey) or ""
         
